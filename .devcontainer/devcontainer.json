@@ -10,7 +10,7 @@
 	"runArgs": [
 		"--gpus", "\"device=MIG-d9879fa7-9faf-5df8-8bbc-d885f941fd0a\"",
 		"--name",  "rlabadie_jde-dev",  // Set container name.
-		"--cpuset-cpus", "0-64" , // Limit the container to specific CPUs.
+		"--cpuset-cpus", "100-164" , // Limit the container to specific CPUs.
 		"--shm-size=256g"
 	],
 	"extensions": [

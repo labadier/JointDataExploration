@@ -169,3 +169,5 @@ Werkzeug==3.0.4
 xmod==1.8.1
 yarl==1.15.2
 ipywidgets
+bitsandbytes 
+accelerate
