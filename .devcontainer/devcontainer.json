@@ -1,0 +1,22 @@
+{
+	"name": "rlabadie_jde-dev",
+	"build": {
+		"context": "..",  // Sets the run context to one level up instead of the .devcontainer folder.
+		"dockerfile": "../Dockerfile"  // Use the Dockerfile at the parent directory level.
+	},
+	"features": {
+		"ghcr.io/raucha/devcontainer-features/pytorch:1": {}  // Pytorch feature support.
+	},
+	"runArgs": [
+		"--gpus", "\"device=MIG-d9879fa7-9faf-5df8-8bbc-d885f941fd0a\"",
+		"--name",  "rlabadie_jde-dev",  // Set container name.
+		"--cpuset-cpus", "0-64" , // Limit the container to specific CPUs.
+		"--shm-size=256g"
+	],
+	"extensions": [
+        "ms-python.python",        
+        "ms-toolsai.jupyter",       
+		"ms-mechatroner.rainbow-csv",
+    ],
+	"remoteUser": "app"
+}

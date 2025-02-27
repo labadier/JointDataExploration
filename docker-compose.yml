@@ -1,0 +1,33 @@
+services:
+  app:
+    container_name: rlabadie_jde-dev-terminal
+    image: rlabadie_jde-dev:latest  # Build the image from your Dockerfile
+    # user: app:rlabadie
+    build:
+      context: .  # Directory containing the Dockerfile
+      dockerfile: Dockerfile  # Name of your Dockerfile
+    environment:
+      - START=0
+      - END=1
+    volumes:
+      # - /mnt/nextcloud:/workspace/video_data
+      - /home/rlabadie/jde:/workspace/code  # Mount the host folder to the container
+      # - /home/rlabadie/anivision/routines:/workspace/code  # Mount the host folder to the container
+    deploy: 
+      resources:
+        limits:
+          memory: 256G
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPUID}"] 
+              capabilities: [gpu]
+
+    # entrypoint: ["python3", "run.py"]  # Run the application
+    cpuset: ${CPUSET}
+    shm_size: '256gb'
+networks:
+  custom_network_name:
+    name: jde  # You can set the custom network name here
+
+    
