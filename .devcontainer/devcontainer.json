@@ -8,7 +8,7 @@
 		"ghcr.io/raucha/devcontainer-features/pytorch:1": {}  // Pytorch feature support.
 	},
 	"runArgs": [
-		"--gpus", "\"device=MIG-d9879fa7-9faf-5df8-8bbc-d885f941fd0a\"",
+		"--gpus", "\"device=MIG-41f413da-d2ce-5c9c-b2c8-a7a3795058b7\"",
 		"--name",  "rlabadie_jde-dev",  // Set container name.
 		"--cpuset-cpus", "100-164" , // Limit the container to specific CPUs.
 		"--shm-size=256g"
