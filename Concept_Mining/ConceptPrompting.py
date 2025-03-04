@@ -2,68 +2,145 @@ import random; random.seed(42)
 import numpy as np; np.random.seed(42)
 import torch; torch.manual_seed(42)
 
+from glob import glob
 
-def generate_episode(topic_groups, concept_instance, images, threshold = 10):
+class explore_environment:
 
-	"""
-    Generates an episode consisting of batches of images explored by the user before introducing
-	a concept, ensuring that concepts appear at least a specified number of times within the batches.
+	def __init__(self, topic_groups, 
+			  concepts, 
+			  concepts_encode,
+			  images, 
+			  images_caption,
+			  images_encode,
+			  threshold = 10,
+			  reward_lambda = 0.5):
+		
+		self.topic_groups = topic_groups
+		self.concepts = concepts
 
-    Parameters:
-    -----------
-    topic_groups : dict
-        A dictionary where keys represent topic labels and values are lists of associated concepts.
-    concept_instance : dict
-        A dictionary mapping each concept to a set of images representing that concept.
-    images : list
-        A list of all available images.
-    threshold : int, optional
-        The minimum number of times each concept should appear in the episode (default is 10).
+		self.images = list(range(len(images)))#images
+		self.images_encode = images_encode
+		self.threshold = threshold
 
-    Returns:
-    --------
-    images_batches : list of sets
-        A list where each element is a batch (set) of images corresponding to a step in the episode.
-	topic : list
-		The list of externalized concepts in the selected topic.
-    """
-	
-	images_batches = []
-	observed_images = set()
-	threshold = 10
+		self.images_batches = None
+		self.topic = None
+		self.concept_instance = None
+		self.preprocess_topic_groups(images_caption)
+		self.step_index = 0
 
-	topic = topic_groups[np.random.choice(list(topic_groups.keys()))]
-	random.shuffle(topic)
-	concept_appereance = {i:set() for i in topic}
+		self.externalized = set()
+		self.obsrved_images = set()
 
-	for step in topic:
+		self.action_encode = concepts_encode
+		self.reward_lambda = reward_lambda
 
-		if len(concept_appereance[step]) < threshold:
-			sample1 = set(random.sample(concept_instance[step], 
-										threshold - len(concept_appereance[step])))
+	def preprocess_topic_groups(self, images_caption):
+
+		self.concept_instance = {i:[] for i in self.concepts}
+
+		for i, path in enumerate(self.images):
+			for c in images_caption[i].split():
+				if c in self.concepts:
+					self.concept_instance[c] += [path]
+
+		remove_topics = []
+		for i in self.topic_groups:
+			remove = [j for j in self.topic_groups[i] if len(self.concept_instance[j]) < self.threshold]
+			for j in remove:
+				self.topic_groups[i].remove(j)
+
+			if len(self.topic_groups[i]) < 8:
+				remove_topics.append(i)
+
+		for i in remove_topics:
+			del self.topic_groups[i]
+		for i in self.topic_groups:
+			print(f"Topic {i}:", len(self.topic_groups[i]))
+
+	def reset(self):
+		self.images_batches, self.topic = self.generate_episode()
+		self.step_index = 0
+		self.obsrved_images = set()
+		self.externalized = set()
+		return self.step()
+
+	def step(self, action = None ):
+
+		if self.step_index < len(self.images_batches):
+			images = self.images_batches[self.step_index]
+			topics = self.topic[self.step_index]
+			self.step_index += 1
+
+			if action is None:
+				return images, topics, False
+
+			# compute reward
+			observation_memmorized = self.images_encode[list(self.obsrved_images)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
+			new_observation = self.images_encode[list(images)].mean(dim=0).unsqueeze(0)
 			
-			sample = sample1 | set(random.sample(images, 
-										len(images)//len(topic) - len(sample1))) 
+			externalized_concepts = self.action_encode[list(self.externalized)].mean(dim=0).unsqueeze(0)
+
+			actual_action = self.action_encode[action]
+
+			reward = self.reward_lambda/2 * actual_action @ new_observation.T \
+				+ self.reward_lambda/2 *actual_action @ observation_memmorized.T \
+				+ (1-self.reward_lambda) * actual_action @ externalized_concepts.T
+
+			return images, topics, reward, False
+		
+
 		else:
-			sample = set(random.sample(images, len(images)//len(topic))) 
+			return [], -1, 0, True 
+		
+		
+	def generate_episode(self):
+		
+		images_batches = []
+		observed_images = set()
+		threshold = 10
 
-		observed_images |= sample
-		images_batches.append(sample)
+		topic = self.topic_groups[np.random.choice(list(self.topic_groups.keys()))]
+		random.shuffle(topic)
+		concept_appereance = {i:set() for i in topic}
 
-		for key in concept_appereance:
+		for step in topic:
 
-			added = set(concept_instance[key]) & sample
-			concept_appereance[key] |= added
+			if len(concept_appereance[step]) < threshold:
+				sample1 = set(random.sample(self.concept_instance[step], 
+											threshold - len(concept_appereance[step])))
+				
+				sample = sample1 | set(random.sample(self.images, 
+											len(self.images)//len(topic) - len(sample1))) 
+			else:
+				sample = set(random.sample(self.images, len(self.images)//len(topic))) 
 
-	return images_batches, topic
+			observed_images |= sample
+			images_batches.append(sample)
 
+			for key in concept_appereance:
 
+				added = set(self.concept_instance[key]) & sample
+				concept_appereance[key] |= added
+
+		topic = [self.concepts.index(i) for i in topic]
+		return images_batches, topic
+	
+	def preprocess_state(self, images):
+		 
+		new_observation = self.images_encode[list(images)].mean(dim=0).unsqueeze(0)
+		observation_memmorized = self.images_encode[list(self.obsrved_images)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
+
+		externalized_concepts = self.action_encode[list(self.externalized)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
+		observation = torch.cat([new_observation + observation_memmorized, externalized_concepts], dim=-1)
+
+		self.obsrved_images |= set(images)
+
+		return observation
 
 
 #actor critic model
 class Actor(torch.nn.Module):
 	
-    
 	def __init__(self, state_dim: int, action_dim: int,
 			  lr_optimizer: float = 0.01):
 		super(Actor, self).__init__()
@@ -92,7 +169,6 @@ class Actor(torch.nn.Module):
 	def load(self, path):
 		self.load_state_dict(torch.load(path, map_location=self.device))
     
-	
 
 class Critic(torch.nn.Module):
 
@@ -132,7 +208,7 @@ class AdaptationEngine(torch.nn.Module):
 					buffer_size: int = 512,
 					sample_temperature: float = 5.0,
 					final_temperature: float = 0.1,
-					temperatura_decay: float = 0.99,
+					temperature_decay: float = 0.99,
 					):
 		super(AdaptationEngine, self).__init__()
 
@@ -145,7 +221,7 @@ class AdaptationEngine(torch.nn.Module):
 		self.buffer = []
 		self.temperature = sample_temperature
 		self.final_temperature = final_temperature
-		self.temperature_decay = temperatura_decay
+		self.temperature_decay = temperature_decay
 
 		self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 		self.max_reward = None
@@ -161,8 +237,11 @@ class AdaptationEngine(torch.nn.Module):
 	def policy(self, state, actions_encode):
 	
 		action_latent = self.Actor.forward(state) #b x action_dim
-		preferences = action_latent @ actions_encode.T
+		preferences = action_latent @ actions_encode.to(action_latent.device).T
+		
+		# preferences = preferences +  -1e8*mask.unsqueeze(0).to(preferences.device)
 		preferences -= preferences.max(dim=-1, keepdim=True)[0]
+		
 
 		action_probs = torch.nn.functional.softmax(preferences/self.temperature, dim = -1) + 1e-8
 		return action_probs
