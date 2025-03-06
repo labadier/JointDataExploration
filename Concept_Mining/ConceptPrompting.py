@@ -2,6 +2,8 @@ import random; random.seed(42)
 import numpy as np; np.random.seed(42)
 import torch; torch.manual_seed(42)
 
+from sklearn.metrics.pairwise import cosine_similarity
+
 from glob import glob
 
 class explore_environment:
@@ -34,6 +36,9 @@ class explore_environment:
 		self.action_encode = concepts_encode
 		self.reward_lambda = reward_lambda
 
+		self.taken_actions = []
+		self.diversity_threshold = 0.5
+
 	def preprocess_topic_groups(self, images_caption):
 
 		self.concept_instance = {i:[] for i in self.concepts}
@@ -58,11 +63,13 @@ class explore_environment:
 			print(f"Topic {i}:", len(self.topic_groups[i]))
 
 	def reset(self):
-		self.images_batches, self.topic = self.generate_episode()
+		self.images_batches, self.topic, topic_index = self.generate_episode()
 		self.step_index = 0
 		self.obsrved_images = set()
 		self.externalized = set()
-		return self.step()
+		self.taken_actions = []
+		return topic_index, self.step()
+	
 
 	def step(self, action = None ):
 
@@ -75,18 +82,32 @@ class explore_environment:
 				return images, topics, False
 
 			# compute reward
-			observation_memmorized = self.images_encode[list(self.obsrved_images)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
-			new_observation = self.images_encode[list(images)].mean(dim=0).unsqueeze(0)
+			observation_memmorized = self.images_encode[list(self.obsrved_images)] #.mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
+			new_observation = self.images_encode[list(images)]#.mean(dim=0).unsqueeze(0)
 			
-			externalized_concepts = self.action_encode[list(self.externalized)].mean(dim=0).unsqueeze(0)
+			externalized_concepts = self.action_encode[list(self.externalized)] #.mean(dim=0).unsqueeze(0)
 
-			actual_action = self.action_encode[action]
+			actual_action = self.action_encode[action].unsqueeze(0)
 
-			reward = self.reward_lambda/2 * actual_action @ new_observation.T \
-				+ self.reward_lambda/2 *actual_action @ observation_memmorized.T \
-				+ (1-self.reward_lambda) * actual_action @ externalized_concepts.T
+			observation_compatibility = cosine_similarity(new_observation, actual_action).mean()
+			history_compatibility = cosine_similarity(externalized_concepts, actual_action).mean()
+			dataset_compatibility = cosine_similarity(observation_memmorized, actual_action).mean()
+			current_action_compability = cosine_similarity(actual_action, actual_action).mean()
 
-			return images, topics, reward, False
+			current_batch_similarity = cosine_similarity(actual_action, self.action_encode[self.taken_actions]).mean() if self.taken_actions else 0
+			diversity_penalty = min(0, self.diversity_threshold - current_batch_similarity)
+
+
+			# reward = self.reward_lambda/2 * actual_action @ new_observation.T \
+			# 	+ self.reward_lambda/2 *actual_action @ observation_memmorized.T \
+			# 	+ (1-self.reward_lambda) * actual_action @ externalized_concepts.T
+
+			reward = self.reward_lambda/2 * observation_compatibility \
+				+ self.reward_lambda/2 * dataset_compatibility \
+				+ (1-self.reward_lambda) * history_compatibility\
+				+ current_action_compability #+ float(diversity_penalty)
+			# print(type(reward), reward)
+			return images, topics, np.float32(reward), False
 		
 
 		else:
@@ -99,7 +120,8 @@ class explore_environment:
 		observed_images = set()
 		threshold = 10
 
-		topic = self.topic_groups[np.random.choice(list(self.topic_groups.keys()))]
+		topic_index = np.random.choice(list(self.topic_groups.keys()))
+		topic = self.topic_groups[topic_index]
 		random.shuffle(topic)
 		concept_appereance = {i:set() for i in topic}
 
@@ -123,18 +145,18 @@ class explore_environment:
 				concept_appereance[key] |= added
 
 		topic = [self.concepts.index(i) for i in topic]
-		return images_batches, topic
+		return images_batches, topic, topic_index
 	
 	def preprocess_state(self, images):
 		 
-		new_observation = self.images_encode[list(images)].mean(dim=0).unsqueeze(0)
+		new_observation = self.images_encode[list(images)].mean(dim=0).unsqueeze(0) if images else torch.zeros(1, self.images_encode.shape[-1])
 		observation_memmorized = self.images_encode[list(self.obsrved_images)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
 
 		externalized_concepts = self.action_encode[list(self.externalized)].mean(dim=0).unsqueeze(0) if self.obsrved_images else torch.zeros_like(new_observation)
 		observation = torch.cat([new_observation + observation_memmorized, externalized_concepts], dim=-1)
 
 		self.obsrved_images |= set(images)
-
+		
 		return observation
 
 
@@ -258,6 +280,7 @@ class AdaptationEngine(torch.nn.Module):
 		values = self.Critic(state)
 		next_values = self.Critic(next_state).detach()
 
+		# print("rewards", rewards.dtype, "values", values.dtype, "next_values", next_values.dtype, "dones", dones.dtype)
 		loss_critic = self.Critic.criterion(rewards + self.gamma*next_values*(1 - dones), values)
 
 		qa = self.policy(state, actions_encode)
