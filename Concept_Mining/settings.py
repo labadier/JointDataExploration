@@ -15,11 +15,10 @@ class settings:
 
 class pretraining_settings:
     
-    episodes = 250
+    episodes = 500
     episode_length = 1000
     # dataset_coverage_step = .75
     gamma = 0.99
-    buffer = []
     # actions_embedd_dim = 2
     buffer_size = 64
 

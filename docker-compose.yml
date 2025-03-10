@@ -7,25 +7,27 @@ services:
       context: .  # Directory containing the Dockerfile
       dockerfile: Dockerfile  # Name of your Dockerfile
     environment:
-      - START=0
-      - END=1
+      - BUFFER_SIZE=${BUFFER_SIZE}
     volumes:
       # - /mnt/nextcloud:/workspace/video_data
       - /home/rlabadie/jde:/workspace/code  # Mount the host folder to the container
       # - /home/rlabadie/anivision/routines:/workspace/code  # Mount the host folder to the container
     deploy: 
       resources:
-        limits:
-          memory: 256G
         reservations:
           devices:
             - driver: nvidia
               device_ids: ["${GPUID}"] 
               capabilities: [gpu]
-
     # entrypoint: ["python3", "run.py"]  # Run the application
     cpuset: ${CPUSET}
     shm_size: '256gb'
+    ports:
+      - "0.0.0.0:10008:8000"  # Maps port 8000 in the container to 10008 on the host machine
+    command: /bin/bash  # Default command when the container starts (interactive shell)
+    stdin_open: true  # Keep STDIN open for interaction (for bash)
+    tty: true  # Allocate a pseudo-TTY (for interactive shell)
+
 networks:
   custom_network_name:
     name: jde  # You can set the custom network name here

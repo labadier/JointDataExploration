@@ -171,3 +171,5 @@ yarl==1.15.2
 ipywidgets
 bitsandbytes 
 accelerate
+mlflow
+optuna

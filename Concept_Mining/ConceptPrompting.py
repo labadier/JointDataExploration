@@ -92,7 +92,7 @@ class explore_environment:
 			observation_compatibility = cosine_similarity(new_observation, actual_action).mean()
 			history_compatibility = cosine_similarity(externalized_concepts, actual_action).mean()
 			dataset_compatibility = cosine_similarity(observation_memmorized, actual_action).mean()
-			current_action_compability = cosine_similarity(actual_action, actual_action).mean()
+			# current_action_compability = cosine_similarity(actual_action, actual_action).mean()
 
 			current_batch_similarity = cosine_similarity(actual_action, self.action_encode[self.taken_actions]).mean() if self.taken_actions else 0
 			diversity_penalty = min(0, self.diversity_threshold - current_batch_similarity)
@@ -105,7 +105,8 @@ class explore_environment:
 			reward = self.reward_lambda/2 * observation_compatibility \
 				+ self.reward_lambda/2 * dataset_compatibility \
 				+ (1-self.reward_lambda) * history_compatibility\
-				+ current_action_compability #+ float(diversity_penalty)
+				+ current_batch_similarity \
+				+ diversity_penalty
 			# print(type(reward), reward)
 			return images, topics, np.float32(reward), False
 		
@@ -231,6 +232,7 @@ class AdaptationEngine(torch.nn.Module):
 					sample_temperature: float = 5.0,
 					final_temperature: float = 0.1,
 					temperature_decay: float = 0.99,
+					**kwargs
 					):
 		super(AdaptationEngine, self).__init__()
 
