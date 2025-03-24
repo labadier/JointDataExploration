@@ -20,11 +20,11 @@ class pretraining_settings:
     # dataset_coverage_step = .75
     gamma = 0.99
     # actions_embedd_dim = 2
-    buffer_size = 64
+    buffer_size = 512
 
-    lr_actor = 0.001
-    lr_critic = 0.0001
+    lr_actor = 1e-4
+    lr_critic = 3e-4
 
     temperature = 5.0
     final_temperature = 0.1
-    decay_rate = 0.99  # Decay per episode
+    decay_rate = 0.9955  # Decay per episode

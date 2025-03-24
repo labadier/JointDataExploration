@@ -5,3 +5,6 @@ s1
 *pkl
 mlruns
 mlflow.log
+outputs*
+*.pt
+*.pt

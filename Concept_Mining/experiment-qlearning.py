@@ -1,8 +1,7 @@
 import random; random.seed(0)
 import numpy as np; np.random.seed(0)
 
-from utils import train_agent
-# from Concept_Mining.ConceptMining import AdaptationEngine
+from utils_bandits import train_agent
 import pickle,  pandas as pd
 import seaborn as sns
 
@@ -46,7 +45,11 @@ def champion_callback(study, frozen_trial):
 def run_training(settings: dict, weight_index) -> tuple:
 
     print(f"Training with settings: {settings}")
-    average_reward, deviation_reward, history = train_agent(settings, save_suffix = f"_{weight_index}")
+    os.makedirs(os.path.join("outputs_optuna", str(weight_index)), exist_ok=True)
+
+    average_reward, deviation_reward, history = train_agent(settings, 
+                                                            output_path=os.path.join("outputs_optuna", str(weight_index)),
+                                                            save_suffix = f"_{weight_index}")
     return average_reward, deviation_reward, history
 
 def optuna_reward( trial: optuna.Trial, settings: dict ) -> float:
@@ -54,16 +57,9 @@ def optuna_reward( trial: optuna.Trial, settings: dict ) -> float:
     with mlflow.start_run(nested=True):
 
         hyperparameters = {
-            "lr_critic" : trial.suggest_float('lr_critic', 2e-3, 1e-1),
-            "temperature" : trial.suggest_float('temperature', 2, 5),
+            "temperature" : trial.suggest_float('epsilon', 0.1, 0.6),
             "lr_actor": trial.suggest_float('lr_actor', 2e-3, 1e-1),
         }
-
-        # hyperparameters["lr_actor"] =  trial.suggest_float('lr_actor', 2e-5, 
-        #                                                    hyperparameters["lr_critic"])
-        hyperparameters["final_temperature"] = trial.suggest_float('final_temperature', 
-                                                                   0.3, 0.5*hyperparameters["temperature"])
-
 
         mlflow.log_params(hyperparameters)
         average_reward, _, _ = run_training(settings | hyperparameters, trial.number)
@@ -79,17 +75,18 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.ERROR)
 
     mlflow.set_tracking_uri(uri='http://localhost:8000')
-    mlflow.set_experiment(f'Actor-Critic Buffer Size: {BUFFER_SIZE}')
+    mlflow.set_experiment(f'Contextual Bandit Buffer Size: {BUFFER_SIZE}')
     print(f'Experiment - Buffer size: {BUFFER_SIZE}')
 
-    with mlflow.start_run(experiment_id=get_or_create_experiment(f'Actor-Critic Buffer Size: {BUFFER_SIZE}'),
+    with mlflow.start_run(experiment_id=get_or_create_experiment(f'Contextual Bandit Buffer Size: {BUFFER_SIZE}'),
                           run_name='simple_reward', nested=True):
         
         settings = {'episode_length': 1000,
             'episodes': 5000,
             'gamma': 0.99,
             'decay_rate': 0.99,
-            'buffer_size': BUFFER_SIZE}
+            'buffer_size': BUFFER_SIZE,
+            'final_temperature': 0.1}
         
         study = optuna.create_study(direction='maximize')
         study.optimize(lambda trial: optuna_reward(trial, settings), n_trials=16)
