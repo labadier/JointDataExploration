@@ -49,7 +49,8 @@ def run_training(settings: dict, weight_index) -> tuple:
 
     average_reward, deviation_reward, history = train_agent(settings, 
                                                             output_path=os.path.join("outputs_optuna", str(weight_index)),
-                                                            save_suffix = f"_{weight_index}")
+                                                            save_suffix = f"_{weight_index}",
+                                                            use_rnn=True)
     return average_reward, deviation_reward, history
 
 def optuna_reward( trial: optuna.Trial, settings: dict ) -> float:
@@ -75,14 +76,14 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.ERROR)
 
     mlflow.set_tracking_uri(uri='http://localhost:8000')
-    mlflow.set_experiment(f'Contextual Bandit Buffer Size: {BUFFER_SIZE}')
-    print(f'Experiment - Buffer size: {BUFFER_SIZE}')
+    mlflow.set_experiment(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}')
+    print(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}')
 
-    with mlflow.start_run(experiment_id=get_or_create_experiment(f'Contextual Bandit Buffer Size: {BUFFER_SIZE}'),
+    with mlflow.start_run(experiment_id=get_or_create_experiment(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}'),
                           run_name='simple_reward', nested=True):
         
         settings = {'episode_length': 1000,
-            'episodes': 5000,
+            'episodes': 2500,
             'gamma': 0.99,
             'decay_rate': 0.99,
             'buffer_size': BUFFER_SIZE,

@@ -105,13 +105,16 @@ class explore_environment:
 			# print(a, b)
 			self.topic[a], self.topic[b] = self.topic[b], self.topic[a]
 			concept = self.topic[a]
-			reward = 2
-		elif action in self.externalized:
+			reward = 5
+		elif action in self.externalized or future_similarity.max() < 0.97:
 			reward = -5
-		else:
-			reward = future_similarity.max() if action not in self.topic[self.step_index-1:] else 2
+		elif future_similarity.max() > 0.97:
+			reward = 5
 		
-		return images, concept, np.float32(reward), end_episode
+		# action in self.taken_actions:
+		# 	reward = future_similarity.max() if action not in self.topic[self.step_index-1:] else 2
+		
+		return images, concept, np.float32(reward), end_episode, (action in future)
 		
 		
 		

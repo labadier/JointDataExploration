@@ -16,8 +16,8 @@ import mlflow
 
 from types import SimpleNamespace
 
-def get_entropy(preferences):
-	return -torch.sum(preferences * torch.log(preferences), dim = -1)
+# def get_entropy(preferences):
+# 	return -torch.sum(preferences * torch.log(preferences), dim = -1)
 
 def train_agent (settings: dict, use_mlflow: bool = True, 
                  output_path: str = '.', save_suffix: str = "",
@@ -63,14 +63,17 @@ def train_agent (settings: dict, use_mlflow: bool = True,
     #-----------------------------------------------------------------------------
 
     episode_history = {'rewards': [],
-                'loss_actor': []}
+                'loss_actor': [],
+                'hit_rate': [],}
 
     history = {'rewards': [],
             'episodes_rewards': {},
-                'loss_actor': []}
+                'loss_actor': [],
+                'hit_rate': {} }
 
     average_reward = [0]
     deviation_reward = [0]
+    average_hit_rate = [0]
 
     for episode in range(settings.episodes):
 
@@ -81,11 +84,13 @@ def train_agent (settings: dict, use_mlflow: bool = True,
 
         episode_history = {'rewards': [],
             'loss_actor': [],
-            'entropy': []}
+            # 'entropy': [],
+            'hit_rate': []}
         if episode_index not in history['episodes_rewards']:
             history['episodes_rewards'][episode_index] = []
+            history['hit_rate'][episode_index] = []
                 
-        itera = tqdm(range(len(env.topic) - 1))
+        itera = tqdm(range(len(env.topic) - 2))
         itera.set_description(f"Episode {episode}")
 
         taken_actions = []
@@ -95,7 +100,7 @@ def train_agent (settings: dict, use_mlflow: bool = True,
             with torch.no_grad():
                 Agent.eval()
                 if use_rnn:
-                    preferences = Agent.policy(prev_state, actions_encode, prev_action_seq)
+                    preferences = Agent.policy(prev_state, actions_encode, taken_actions, prev_action_seq)
                 else:
                     preferences = Agent.policy(prev_state, actions_encode)	
                     
@@ -107,13 +112,10 @@ def train_agent (settings: dict, use_mlflow: bool = True,
 
                 taken_actions.append(action)
                 
-                state, feedback, reward, done = env.step( action )
+                state, feedback, reward, done, is_hit = env.step( action )
                 state, action_seq = env.preprocess_state(state)
 
-                # done |= len(set(env.topic[env.step_index+1:]) - set(taken_actions))
-
-                if feedback in taken_actions:
-                    continue   
+                # done |= len(set(env.topic[env.step_index+1:]) - set(taken_actions))  
 
                 env.externalized.add(feedback)
             Agent.train()
@@ -128,7 +130,8 @@ def train_agent (settings: dict, use_mlflow: bool = True,
                             masked_indices = taken_actions)
             
             episode_history['rewards'].append(reward)
-            episode_history['entropy'].append(get_entropy(preferences).mean().item())
+            # episode_history['entropy'].append(get_entropy(preferences).mean().item())
+            episode_history['hit_rate'].append(is_hit)
 
             if Agent.buffer_size <= len(Agent.buffer):
                 actor_loss = Agent.optimization_step(actions_encode)
@@ -138,10 +141,11 @@ def train_agent (settings: dict, use_mlflow: bool = True,
             prev_action_seq = action_seq
 
             itera.set_postfix({'Temp': f'{Agent.temperature:.3f}',
+                            'Avg. Hit Rate': f"{average_hit_rate[-1]:.3f}",
                             'Avg. Reward': f"{average_reward[-1]:.3f}",
                             'Actions': len(set(taken_actions)),
                             'Reward': sum(episode_history['rewards']),
-                            'entropy': sum(episode_history['entropy']),
+                            # 'entropy': sum(episode_history['entropy']),
                             'L Actor': sum(episode_history['loss_actor'])} )
             if done:
                 history['rewards'].append(sum(episode_history['rewards']))
@@ -149,27 +153,32 @@ def train_agent (settings: dict, use_mlflow: bool = True,
                 break
         
         history['episodes_rewards'][episode_index].append(sum(episode_history['rewards']).item())
+        history['hit_rate'][episode_index].append(sum(episode_history['hit_rate'])/len(episode_history['hit_rate']))
 
         # average_reward += [np.mean([np.mean(history['episodes_rewards'][i]) for i in history['episodes_rewards'].keys()]) \
         average_reward += [np.mean([history['episodes_rewards'][i][-1] for i in history['episodes_rewards'].keys()]) \
             if len(history['episodes_rewards']) ==  len(env.topic_groups) else -1]
         deviation_reward += [np.std([np.mean(history['episodes_rewards'][i]) for i in history['episodes_rewards'].keys()]) \
         if len(history['episodes_rewards']) ==  len(env.topic_groups) else -1]
-
+        average_hit_rate += [np.mean([np.mean(history['hit_rate'][i]) for i in history['hit_rate'].keys()]) \
+            if len(history['hit_rate']) ==  len(env.topic_groups) else -1]
+        
         if use_mlflow and Agent.max_reward is not None and Agent.max_reward > -1:
             mlflow.log_metric('average_reward', average_reward[-1], 
                                 step = episode)
             mlflow.log_metric('loss_bandit', sum(episode_history['loss_actor']), 
                                 step = episode)
             mlflow.log_metric('temperature', Agent.temperature, 
-                                step = episode)                   
+                                step = episode)    
+            mlflow.log_metric('average_hit_rate', average_hit_rate[-1],
+                                step = episode)               
 
-        if Agent.max_reward is None or Agent.max_reward < average_reward[-1]:
-            Agent.max_reward = average_reward[-1]
+        if Agent.max_reward is None or Agent.max_reward < average_hit_rate[-1]:
+            Agent.max_reward = average_hit_rate[-1]
             Agent.Actor.save(os.path.join(output_path, f"bandit{save_suffix}.pt"))
             Agent.temperature = max(Agent.final_temperature, Agent.temperature * Agent.temperature_decay)
 
-            print(f"Model saved - {average_reward[-1]:.2f}")
+            print(f"Model saved - {average_hit_rate[-1]:.2f}")
 
         if episode % 1000 == 0 or episode == settings.episodes - 1:
             os.makedirs(os.path.join(output_path, str(episode)), exist_ok=True)
@@ -301,11 +310,13 @@ def simulate(Agent, topic_groups, generated_concepts, actions_encode,
             for step in itera:
 
                 # actions_trajectory = get_trajectory(env, prev_state, trajectory_len = 10)
-                preferences = Agent.policy(prev_state, actions_encode, prev_action_seq if Agent.use_rnn else None).cpu()[0]
+                preferences = Agent.policy(state = prev_state,
+                                            actions_encode = actions_encode,
+                                            action_seq = prev_action_seq if Agent.use_rnn else None).cpu()[0]
                 preferences[taken_actions] = -1<<32
                 action = preferences.argmax() #torch.multinomial(preferences, 1).squeeze(-1)
 
-                state, feedback, _, done = env_tmp.step( action )
+                state, feedback, _, done, _ = env_tmp.step( action )
                 taken_actions.append(action.item())
                 # print(action.item(), generated_concepts[action.item()])
                 state, action_seq = env_tmp.preprocess_state(state)

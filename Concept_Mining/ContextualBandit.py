@@ -16,10 +16,16 @@ class Actor(torch.nn.Module):
         if use_rnn:
             self.text_gru = torch.nn.GRU(
                 input_size=action_dim,
-                hidden_size=64,
-                batch_first=True
+                hidden_size=128,
+                batch_first=True,
+                num_layers=3,
             )
-            self.text_proj = torch.nn.Linear(64, 256)
+            self.text_proj = torch.nn.Linear(128, 256)
+
+            self.condense_image = torch.nn.Sequential(
+                torch.nn.Linear(state_dim >> 1, 256),
+                torch.nn.ReLU(),
+                torch.nn.Linear(256, 128))
         else:
             self.condense_text = torch.nn.Sequential(
                 torch.nn.Linear(state_dim >> 1, 256),
@@ -28,15 +34,22 @@ class Actor(torch.nn.Module):
                 torch.nn.BatchNorm1d(256), 
                 torch.nn.ReLU())
             
-        self.condense_image = torch.nn.Sequential(
-            torch.nn.Linear(state_dim >> 1, 256),
-            torch.nn.ReLU(),
-            torch.nn.Linear(256, 256),
-            torch.nn.BatchNorm1d(256), 
-            torch.nn.ReLU())
+            self.condense_image = torch.nn.Sequential(
+                torch.nn.Linear(state_dim >> 1, 256),
+                torch.nn.ReLU(),
+                torch.nn.Linear(256, 256),
+                torch.nn.BatchNorm1d(256), 
+                torch.nn.ReLU())
+        
+        # self.head = torch.nn.Sequential(
+        #     # torch.nn.Linear(state_dim, 128),
+        #     torch.nn.Linear(256, 128),
+        #     torch.nn.BatchNorm1d(128), 
+        #     torch.nn.ReLU(),
+        #     torch.nn.Linear(128, action_dim),
+        # )
 
         self.head = torch.nn.Sequential(
-            # torch.nn.Linear(state_dim, 128),
             torch.nn.Linear(256, 128),
             torch.nn.BatchNorm1d(128), 
             torch.nn.ReLU(),
@@ -59,7 +72,8 @@ class Actor(torch.nn.Module):
         else:
             masks = action_seq[1]
             action_seq = action_seq[0].to(self.device)
-            hidden, _ = self.text_gru(action_seq) # hidden -> b, len(action_seq), 64
+            # print(i.shape)
+            hidden, _ = self.text_gru(action_seq, i.unsqueeze(0).repeat([3, 1, 1])) # hidden -> b, len(action_seq), 64
             # take the relevant hidden state acording to the mask
             last_nonzero_idx = torch.argmax(masks.cumsum(1), dim=1)
             
@@ -67,7 +81,7 @@ class Actor(torch.nn.Module):
             logits = torch.stack([hidden[i][non_zero] for i, non_zero in enumerate(last_nonzero_idx.tolist())]) # b, 64
             t = self.text_proj(logits)
 
-        return self.head(i + t)
+        return self.head(t)
         # return self.head(state)
 
     def save(self, path):
@@ -122,12 +136,34 @@ class AdaptationEngine(torch.nn.Module):
                             'next_action_seq': next_action_seq,
                             'end_state': done,
                             'masked_index': mask})
+
+    def action_selection_heuristic(self, action_seq, taken_actions, actions_encode):
+
+        # the heuristic will be the action that is the most similar to the average of the action sequence
+        avg_action_seq = action_seq.mean(1) # b x action_dim @ action_dim x action_space_len
+        print(avg_action_seq.shape)
+
+        heuristic = avg_action_seq @ actions_encode.to(avg_action_seq.device).T # b x action_space_len
+        assert taken_actions.shape == heuristic.shape and torch.all(torch.logical_or(taken_actions == 0, taken_actions == 1))
         
-    def policy(self, state, actions_encode, action_seq = None):
+        # mask taken actions
+        heuristic[taken_actions == 1] = -1e8
+
+        #
+
+
+
+
+        
+    def policy(self, state, actions_encode, taken_actions=None, action_seq = None):
+        
+        assert (action_seq is None and taken_actions is None) or (action_seq is not None and taken_actions is not None), "action_seq and taken_actions must be both None or both not None"
         
         action_latent = self.Actor.forward(state, action_seq=action_seq) #b xaction_dim
         preferences = action_latent @ actions_encode.to(action_latent.device).T
         
+        if taken_actions is not None: #!TODO remove
+            preferences[taken_actions] = -1e8
         # if masking_actions is not None:
         #     preferences = preferences +  -1e8*masking_actions.to(preferences.device)
             
@@ -150,8 +186,16 @@ class AdaptationEngine(torch.nn.Module):
         dones = torch.tensor([float(x['end_state']) for x in self.buffer]).to(device=self.Actor.device).reshape(-1, 1)
         masks = torch.cat([x['masked_index'].unsqueeze(0) for x in self.buffer]).to(device=self.Actor.device)
 
-        qa = self.policy(state, actions_encode, (action_seq, seq_masks) if self.use_rnn else None)
-        qa_star = self.policy(next_state, actions_encode, (next_action_seq, next_seq_masks) if self.use_rnn else None)
+
+        qa = self.policy(state = state, 
+                         actions_encode = actions_encode,
+                         taken_actions = masks if self.use_rnn else None,
+                         action_seq = (action_seq, seq_masks) if self.use_rnn else None)
+        
+        qa_star = self.policy(state = next_state, 
+                              actions_encode = actions_encode, 
+                              taken_actions = masks if self.use_rnn else None,
+                              action_seq = (next_action_seq, next_seq_masks) if self.use_rnn else None)
         
         #the best action in the next state
         q_start_values = torch.max(qa_star, 1)[0].unsqueeze(1).detach()
