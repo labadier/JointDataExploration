@@ -27,9 +27,11 @@ services:
     command: /bin/bash  # Default command when the container starts (interactive shell)
     stdin_open: true  # Keep STDIN open for interaction (for bash)
     tty: true  # Allocate a pseudo-TTY (for interactive shell)
+    networks:
+      - rlabadie_jde  # Connect to the custom network
 
 networks:
-  custom_network_name:
-    name: jde  # You can set the custom network name here
+  rlabadie_jde:
+    name: rlabadie_jde  # You can set the custom network name here
 
     

@@ -83,9 +83,9 @@ if __name__ == '__main__':
                           run_name='simple_reward', nested=True):
         
         settings = {'episode_length': 1000,
-            'episodes': 3000,
+            'episodes': 5500,
             'gamma': 0.99,
-            'decay_rate': 0.99,
+            'decay_rate': 0.99899, #0.99,
             'buffer_size': BUFFER_SIZE,
             'final_temperature': 0.01}
         
