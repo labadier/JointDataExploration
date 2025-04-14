@@ -58,8 +58,8 @@ def optuna_reward( trial: optuna.Trial, settings: dict ) -> float:
     with mlflow.start_run(nested=True):
 
         hyperparameters = {
-            "temperature" : trial.suggest_float('epsilon', 0.1, 0.6),
-            "lr_actor": trial.suggest_float('lr_actor', 2e-3, 1e-1),
+            "temperature" : trial.suggest_float('epsilon', 0.1, 0.5),
+            "lr_actor": trial.suggest_float('lr_actor', 2e-4, 1e-2),
         }
 
         mlflow.log_params(hyperparameters)
@@ -76,18 +76,18 @@ if __name__ == '__main__':
     optuna.logging.set_verbosity(optuna.logging.ERROR)
 
     mlflow.set_tracking_uri(uri='http://localhost:8000')
-    mlflow.set_experiment(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}')
-    print(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}')
+    mlflow.set_experiment(f'Heuristic - QLearning - RNN - Buffer size: {BUFFER_SIZE}')
+    print(f'Heuristic - QLearning - RNN - Buffer size: {BUFFER_SIZE}')
 
-    with mlflow.start_run(experiment_id=get_or_create_experiment(f'QLearning - RNN - Buffer size: {BUFFER_SIZE}'),
+    with mlflow.start_run(experiment_id=get_or_create_experiment(f'Heuristic - QLearning - RNN - Buffer size: {BUFFER_SIZE}'),
                           run_name='simple_reward', nested=True):
         
         settings = {'episode_length': 1000,
-            'episodes': 2500,
+            'episodes': 3000,
             'gamma': 0.99,
             'decay_rate': 0.99,
             'buffer_size': BUFFER_SIZE,
-            'final_temperature': 0.1}
+            'final_temperature': 0.01}
         
         study = optuna.create_study(direction='maximize')
         study.optimize(lambda trial: optuna_reward(trial, settings), n_trials=16)

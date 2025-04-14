@@ -26,6 +26,7 @@ COPY --chown=app:app requirements.txt /workspace
 
 RUN python -m pip install --upgrade pip && pip install --root-user-action=ignore -r requirements.txt
 RUN pip install gymnasium
+RUN pip install -U ipykernel
 # RUN jupyter nbextension enable --py widgetsnbextension
 # RUN jupyter labextension install @jupyter-widgets/jupyterlab-manager
 # COPY --chown=app:app routines /workspace

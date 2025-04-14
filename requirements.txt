@@ -148,7 +148,6 @@ tensorboard-data-server==0.7.2
 threadpoolctl==3.5.0
 timm==0.9.16
 tokenizers==0.20.0
-torch==2.4.1
 torchmetrics==1.4.3
 torchvision==0.19.1
 tornado==6.4.1

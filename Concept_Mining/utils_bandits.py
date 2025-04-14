@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from glob import glob
 
 from SimulationEnvironment import explore_environment
-from ContextualBandit import AdaptationEngine
+from ContextualBandit import AdaptationEngine, bcolors
 from tqdm import tqdm
 from sklearn.manifold import TSNE
 
@@ -78,9 +78,9 @@ def train_agent (settings: dict, use_mlflow: bool = True,
     for episode in range(settings.episodes):
 
         episode_index, (prev_state, feedback, _) = env.reset()
+        env.externalized.add(feedback)#!CHECKED This is fine
         prev_state, prev_action_seq = env.preprocess_state(prev_state)
 
-        env.externalized.add(feedback)
 
         episode_history = {'rewards': [],
             'loss_actor': [],
@@ -100,24 +100,30 @@ def train_agent (settings: dict, use_mlflow: bool = True,
             with torch.no_grad():
                 Agent.eval()
                 if use_rnn:
-                    preferences = Agent.policy(prev_state, actions_encode, taken_actions, prev_action_seq)
+                    preferences = Agent.policy(prev_state, actions_encode, 
+                                               taken_actions = taken_actions if Agent.use_rnn else None, 
+                                               action_seq = prev_action_seq if Agent.use_rnn else None)
                 else:
                     preferences = Agent.policy(prev_state, actions_encode)	
                     
                 
                 if random.random() < Agent.temperature:
-                    action = torch.randint(0, len(env.action_encode), (1,)).item()
+                    # Agent.action_selection_heuristic(vision_state, action_seq, taken_actions, actions_encode):
+                    
+                    indices = (preferences.flatten() != -float('inf')).nonzero(as_tuple=True)[0]
+                    action = indices[torch.randint(len(indices), (1,)).item()].item()
                 else:
                     action = torch.argmax(preferences).item()
+                    # print(preferences.max(), action)
 
-                taken_actions.append(action)
                 
                 state, feedback, reward, done, is_hit = env.step( action )
+                
+                env.externalized.add(feedback)
                 state, action_seq = env.preprocess_state(state)
 
                 # done |= len(set(env.topic[env.step_index+1:]) - set(taken_actions))  
 
-                env.externalized.add(feedback)
             Agent.train()
 
             Agent.push_buffer(state=prev_state,
@@ -129,6 +135,7 @@ def train_agent (settings: dict, use_mlflow: bool = True,
                             done=done, 
                             masked_indices = taken_actions)
             
+            taken_actions.append(action)
             episode_history['rewards'].append(reward)
             # episode_history['entropy'].append(get_entropy(preferences).mean().item())
             episode_history['hit_rate'].append(is_hit)
@@ -188,6 +195,8 @@ def train_agent (settings: dict, use_mlflow: bool = True,
                             image_encodings=image_encodings, captions=captions, images=images, 
                             topic_index=i, save_plot = True, 
                             output_path = os.path.join(output_path, str(episode)))
+                
+            print(f"{bcolors.OKGREEN}Simulation Made - Episode {episode} - {average_hit_rate[-1]:.2f} - {sum(episode_history['rewards'])} - {sum(episode_history['loss_actor'])}{bcolors.ENDC}")
 
     Agent.Actor.load(os.path.join(output_path, f"bandit{save_suffix}.pt"))
     os.makedirs(os.path.join(output_path, "best"), exist_ok=True)
@@ -297,9 +306,9 @@ def simulate(Agent, topic_groups, generated_concepts, actions_encode,
         for episode in range(1):
 
             episode_index, (prev_state, feedback, _) = env_tmp.reset(topic_index)
+            env_tmp.externalized.add(feedback)
             prev_state, prev_action_seq = env_tmp.preprocess_state(prev_state)
 
-            env_tmp.externalized.add(feedback)
             
             if not save_plot:
                 itera = tqdm(range(len(env_tmp.topic)))
@@ -312,6 +321,7 @@ def simulate(Agent, topic_groups, generated_concepts, actions_encode,
                 # actions_trajectory = get_trajectory(env, prev_state, trajectory_len = 10)
                 preferences = Agent.policy(state = prev_state,
                                             actions_encode = actions_encode,
+                                            taken_actions = taken_actions if Agent.use_rnn else None,
                                             action_seq = prev_action_seq if Agent.use_rnn else None).cpu()[0]
                 preferences[taken_actions] = -1<<32
                 action = preferences.argmax() #torch.multinomial(preferences, 1).squeeze(-1)
@@ -319,9 +329,9 @@ def simulate(Agent, topic_groups, generated_concepts, actions_encode,
                 state, feedback, _, done, _ = env_tmp.step( action )
                 taken_actions.append(action.item())
                 # print(action.item(), generated_concepts[action.item()])
+                env_tmp.externalized.add(feedback)
                 state, action_seq = env_tmp.preprocess_state(state)
                 # state, feedback, _, done = env.step( actions_trajectory[0] )
-                env_tmp.externalized.add(feedback)
                 # actions_trajectory = state
                 prev_state = state
                 prev_action_seq = action_seq

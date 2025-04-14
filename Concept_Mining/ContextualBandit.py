@@ -6,6 +6,17 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from glob import glob
 
+class bcolors:
+  HEADER = '\033[95m'
+  OKBLUE = '\033[94m'
+  OKCYAN = '\033[96m'
+  OKGREEN = '\033[92m'
+  WARNING = '\033[93m'
+  FAIL = '\033[91m'
+  ENDC = '\033[0m'
+  BOLD = '\033[1m'
+  UNDERLINE = '\033[4m'
+
 class Actor(torch.nn.Module):
     
     def __init__(self, state_dim: int, action_dim: int,
@@ -137,39 +148,73 @@ class AdaptationEngine(torch.nn.Module):
                             'end_state': done,
                             'masked_index': mask})
 
-    def action_selection_heuristic(self, action_seq, taken_actions, actions_encode):
+    def action_selection_heuristic(self, vision_state, action_seq, taken_actions, actions_encode):
 
         # the heuristic will be the action that is the most similar to the average of the action sequence
-        avg_action_seq = action_seq.mean(1) # b x action_dim @ action_dim x action_space_len
-        print(avg_action_seq.shape)
+        avg_action_seq = action_seq[0].sum(dim=1)/action_seq[1].sum(dim=1, keepdim=True) # b x action_dim @ action_dim x action_space_len
+        # print(avg_action_seq.shape)
+
 
         heuristic = avg_action_seq @ actions_encode.to(avg_action_seq.device).T # b x action_space_len
         assert taken_actions.shape == heuristic.shape and torch.all(torch.logical_or(taken_actions == 0, taken_actions == 1))
         
         # mask taken actions
-        heuristic[taken_actions == 1] = -1e8
 
-        #
+        compatibility_image = vision_state @ actions_encode.to(vision_state.device).T # b x action_space_len
+        heuristic = heuristic*0.5 + compatibility_image*0.5
 
 
+        heuristic[taken_actions == 1] = float('-inf')
 
+
+        _, top_k_indices = torch.topk(heuristic, 50, dim=1, largest=True)# preserve only the top 40
+        mask = torch.zeros_like(heuristic, dtype=torch.bool)
+        mask.scatter_(1, top_k_indices, True)
+        heuristic[~mask] = float('-inf')  # or tensor[~mask] = 0
+        
+        # if vision_state.shape[0] > 1:
+        #     print(heuristic.max(), heuristic.min())
+
+        return heuristic
+        
 
         
-    def policy(self, state, actions_encode, taken_actions=None, action_seq = None):
+    def policy(self, state, actions_encode, 
+               taken_actions=None, action_seq = None, 
+               use_heuristic = True):
+
         
         assert (action_seq is None and taken_actions is None) or (action_seq is not None and taken_actions is not None), "action_seq and taken_actions must be both None or both not None"
         
         action_latent = self.Actor.forward(state, action_seq=action_seq) #b xaction_dim
         preferences = action_latent @ actions_encode.to(action_latent.device).T
+
+        if taken_actions is None:
+            return preferences
         
-        if taken_actions is not None: #!TODO remove
-            preferences[taken_actions] = -1e8
-        # if masking_actions is not None:
-        #     preferences = preferences +  -1e8*masking_actions.to(preferences.device)
+        if type(taken_actions) == list:
+            assert preferences.shape[0] == 1
+
+            one_hot = torch.zeros_like(preferences, dtype=torch.long).to(preferences.device)
+            one_hot[0, taken_actions] = 1
+            taken_actions = one_hot
             
+        assert preferences.shape == taken_actions.shape, f"preferences shape: {preferences.shape}, taken_actions shape: {taken_actions.shape}"
+        
+        
+        if use_heuristic:
+            heuristic = self.action_selection_heuristic(state[..., :state.shape[-1] >> 1], action_seq, taken_actions, actions_encode)
+            preferences = preferences + heuristic.to(preferences.device)
+
+            # if preferences.shape[0] > 1:
+            #     print(heuristic.max(), heuristic.min(), preferences.max(), preferences.min())
+            # print('using heuristic')
+        else: 
+            preferences += -1e8*taken_actions
+
         return preferences
         
-    def update_actor_critic( self, actions_encode: torch.Tensor):
+    def update_agent( self, actions_encode: torch.Tensor):
 
         rewards = torch.tensor([x['reward'] for x in self.buffer]).to(device=self.Actor.device).reshape(-1, 1)
         state = torch.cat([x['state'] for x in self.buffer]).to(device=self.Actor.device)
@@ -190,19 +235,18 @@ class AdaptationEngine(torch.nn.Module):
         qa = self.policy(state = state, 
                          actions_encode = actions_encode,
                          taken_actions = masks if self.use_rnn else None,
-                         action_seq = (action_seq, seq_masks) if self.use_rnn else None)
+                         action_seq = (action_seq, seq_masks) if self.use_rnn else None,
+                         use_heuristic = False)
         
         qa_star = self.policy(state = next_state, 
                               actions_encode = actions_encode, 
                               taken_actions = masks if self.use_rnn else None,
                               action_seq = (next_action_seq, next_seq_masks) if self.use_rnn else None)
-        
+        # print(qa.gather(1, action))
         #the best action in the next state
         q_start_values = torch.max(qa_star, 1)[0].unsqueeze(1).detach()
-        # print(qa, q_start_values)
+        # print(q_start_values.max(), q_start_values.min())
         # print(state)
-        # print(fwef)
-        
         loss_actor = self.Actor.criterion(rewards.to(self.device) + self.gamma*dones*q_start_values,
                                 qa.gather(1, action) ).mean()
 
@@ -211,9 +255,10 @@ class AdaptationEngine(torch.nn.Module):
 
         self.Actor.optimizer.step()
 
+        # print(f"{bcolors.OKGREEN}Updated Agent!!{bcolors.ENDC}")
         return loss_actor.item()
     
     def optimization_step(self, actions_encode: torch.Tensor):
-        loss_actor = self.update_actor_critic(actions_encode)
+        loss_actor = self.update_agent(actions_encode)
         self.buffer = self.buffer[-self.buffer_size + 1:]
         return loss_actor

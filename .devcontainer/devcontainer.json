@@ -11,12 +11,14 @@
 		"--gpus", "\"device=MIG-7b3794c2-682b-5206-8b75-6ccc0a716141\"",
 		"--name",  "rlabadie_jde-dev",  // Set container name.
 		"--cpuset-cpus", "100-164" , // Limit the container to specific CPUs.
-		"--shm-size=256g"
+		"--shm-size=256g",
+		"--network", "rlabadie_jde"
 	],
 	"extensions": [
-        "ms-python.python",        
+        "ms-python.python", 
         "ms-toolsai.jupyter",       
 		"ms-mechatroner.rainbow-csv",
+		"--network", "bridge"
     ],
 	"remoteUser": "app"
 }
